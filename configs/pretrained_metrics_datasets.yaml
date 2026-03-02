@@ -1,0 +1,57 @@
+# configs/pretrained_metrics_datasets.yaml
+# ------------------------------------------
+# Multi-dataset config for compute_pretrained_metrics.py
+# Edit 'root' for each dataset. 'pred_dir' is ignored here.
+#
+# Run:
+#   python pretrained_metrics/compute_pretrained_metrics.py \
+#       --config configs/pretrained_metrics_datasets.yaml
+
+defaults:
+  device: cuda
+  batch_size: 16
+  num_workers: 4
+  img_size: [512, 384]
+  split: test
+  # Selective metric flags (true = run, false = skip)
+  run_pose:    true
+  run_occ:     true
+  run_bg:      true
+  run_illum:   true
+  run_shape:   true
+  run_appear:  true
+  run_garment: true
+
+datasets:
+  - name: viton
+    root: /data/VITON
+
+  - name: viton_hd
+    root: /data/VITON-HD
+    img_size: [1024, 768]
+
+  - name: dresscode
+    root: /data/DressCode
+    dresscode_category: upper_body
+
+  - name: mpv
+    root: /data/MPV
+
+  - name: deepfashion_tryon
+    root: /data/DeepFashion-TryOn
+
+  - name: acgpn
+    root: /data/ACGPN
+
+  - name: cp_vton
+    root: /data/CP-VTON
+
+  - name: hr_vton
+    root: /data/HR-VTON
+    img_size: [1024, 768]
+
+  - name: ladi_vton
+    root: /data/LaDI-VTON
+
+  - name: ovnet
+    root: /data/OVNet

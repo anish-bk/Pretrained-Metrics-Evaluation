@@ -1,0 +1,72 @@
+# configs/all_datasets.yaml
+# --------------------------
+# Edit 'root' and 'pred_dir' for each dataset before running.
+# pred_dir  →  folder with your model's output images (filename = sample ID)
+#              Leave blank / remove if you want to use the inline _run_model() stub.
+#
+# Run:
+#   python evaluate.py --config configs/all_datasets.yaml [--no_vlm] [--no_jepa]
+
+defaults:
+  device: cuda          # change to 'cpu' if no GPU
+  batch_size: 8
+  num_workers: 4
+  img_size: [512, 384]
+  split: test
+  compute_pose: true
+  compute_vlm: true
+  compute_jepa: true
+
+datasets:
+  # ── 1. VITON ──────────────────────────────────────────────────────────────
+  - name: viton
+    root: /data/VITON
+    pred_dir: /results/my_model/viton
+
+  # ── 2. VITON-HD ───────────────────────────────────────────────────────────
+  - name: viton_hd
+    root: /data/VITON-HD
+    pred_dir: /results/my_model/viton_hd
+    img_size: [1024, 768]
+
+  # ── 3. DressCode ──────────────────────────────────────────────────────────
+  - name: dresscode
+    root: /data/DressCode
+    pred_dir: /results/my_model/dresscode
+    dresscode_category: upper_body      # or lower_body / dresses
+
+  # ── 4. MPV ────────────────────────────────────────────────────────────────
+  - name: mpv
+    root: /data/MPV
+    pred_dir: /results/my_model/mpv
+
+  # ── 5. DeepFashion-TryOn ─────────────────────────────────────────────────
+  - name: deepfashion_tryon
+    root: /data/DeepFashion-TryOn
+    pred_dir: /results/my_model/deepfashion_tryon
+
+  # ── 6. ACGPN ──────────────────────────────────────────────────────────────
+  - name: acgpn
+    root: /data/ACGPN
+    pred_dir: /results/my_model/acgpn
+
+  # ── 7. CP-VTON ────────────────────────────────────────────────────────────
+  - name: cp_vton
+    root: /data/CP-VTON
+    pred_dir: /results/my_model/cp_vton
+
+  # ── 8. HR-VTON ────────────────────────────────────────────────────────────
+  - name: hr_vton
+    root: /data/HR-VTON
+    pred_dir: /results/my_model/hr_vton
+    img_size: [1024, 768]
+
+  # ── 9. LaDI-VTON ─────────────────────────────────────────────────────────
+  - name: ladi_vton
+    root: /data/LaDI-VTON
+    pred_dir: /results/my_model/ladi_vton
+
+  # ── 10. OVNet ─────────────────────────────────────────────────────────────
+  - name: ovnet
+    root: /data/OVNet
+    pred_dir: /results/my_model/ovnet
