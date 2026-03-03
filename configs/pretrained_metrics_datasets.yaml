@@ -57,4 +57,8 @@ datasets:
     root: /data/OVNet
   - name: laion_fashion
     root: benchmark_datasets/LAION-RVS-Fashion
-    split: train
+    split: test
+
+  - name: street_tryon
+    root: benchmark_datasets/street_tryon
+    split: test        # maps to validation/ internally (no explicit test split)
