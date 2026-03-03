@@ -72,7 +72,25 @@ from tqdm import tqdm
 
 # ── Local modules ─────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
-from datasets.loaders import get_dataset, DATASET_REGISTRY
+from datasets.loaders import get_dataset, DATASET_REGISTRY, _STANDALONE_NAMES
+
+# Standalone dataloader canonical collates (for dataloaders/ package)
+try:
+    from dataloaders import (
+        canonical_collate_dresscode,
+        canonical_collate_vitonhd,
+        canonical_collate_street_tryon,
+        canonical_collate_laion,
+    )
+    _STANDALONE_COLLATES = {
+        "dresscode_standalone":    canonical_collate_dresscode,
+        "vitonhd_standalone":      canonical_collate_vitonhd,
+        "street_tryon_standalone": canonical_collate_street_tryon,
+        "laion_standalone":        canonical_collate_laion,
+    }
+except ImportError:
+    _STANDALONE_COLLATES = {}
+
 from metrics.image_metrics import (
     compute_psnr_batch,
     compute_ssim_batch,
@@ -182,6 +200,11 @@ def evaluate_dataset(
     transform = T.Compose([T.Resize(img_size), T.ToTensor()])
     pred_path = Path(pred_dir) if pred_dir else None
 
+    # Use canonical collate for standalone dataloaders to ensure consistent
+    # output format {person, cloth, gt, mask, meta}
+    ds_name_norm = dataset_name.lower().replace("-", "_")
+    collate_fn = _STANDALONE_COLLATES.get(ds_name_norm, None)
+
     loader = DataLoader(
         dataset,
         batch_size=batch_sz,
@@ -189,6 +212,7 @@ def evaluate_dataset(
         num_workers=num_work,
         pin_memory=("cuda" in device),
         drop_last=False,
+        collate_fn=collate_fn,
     )
 
     # ── Metric objects ────────────────────────────────────────────────────────
