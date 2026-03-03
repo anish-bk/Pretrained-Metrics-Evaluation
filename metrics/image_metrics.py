@@ -129,4 +129,4 @@ class LPIPSMetric:
         pred = (pred * 2 - 1).to(self.device)
         gt   = (gt   * 2 - 1).to(self.device)
         scores = self.loss_fn(pred, gt)      # (B, 1, 1, 1)
-        return scores.squeeze().cpu().tolist()
+        return scores.view(-1).cpu().tolist()

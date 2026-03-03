@@ -83,7 +83,7 @@ _PROMPTS: List[Tuple[str, str]] = [
     (
         "s2",
         "Look at this virtual try-on image. On a scale from 1 to 10, how "
-        "geometric naturalalness: does the fabric drape, fold, and deform the "
+        "geometric naturalness: does the fabric drape, fold, and deform the "
         "way real clothing would on a person? 1 = unrealistic stiff or warped "
         "garment, 10 = completely natural 3-D cloth behaviour. "
         "Reply with a single integer only.",
