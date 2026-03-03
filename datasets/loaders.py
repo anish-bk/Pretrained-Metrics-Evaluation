@@ -105,9 +105,46 @@ class VITONHDDataset(BaseTryOnDataset):
     """
 
     def _load_samples(self) -> List[Dict]:
-        pairs_file = self.root / f"{self.split}_pairs.txt"
-        if not pairs_file.exists():
-            raise FileNotFoundError(f"pairs file not found: {pairs_file}")
+        # Look for a pairs file at the dataset root level.
+        pairs_file = None
+        for candidate in (
+            self.root / f"{self.split}_pairs.txt",
+            self.root / f"{self.split}_pairs_paired.txt",
+        ):
+            if candidate.exists():
+                pairs_file = candidate
+                break
+
+        split_root = self.root / self.split
+
+        if pairs_file is None:
+            # Fallback: scan image/ directory and pair each person with same-name cloth.
+            image_dir = split_root / "image"
+            if not image_dir.exists():
+                raise FileNotFoundError(
+                    f"Neither a pairs file nor '{split_root / 'image'}' found for "
+                    f"split '{self.split}' in {self.root}"
+                )
+            all_images = sorted(
+                f for f in os.listdir(image_dir)
+                if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+            )
+            samples = []
+            for person_name in all_images:
+                person_path = split_root / "image" / person_name
+                cloth_path  = split_root / "cloth" / person_name
+                # agnostic mask: prefer 'agnostic-mask' dir, fall back to 'agnostic'
+                mask_path = split_root / "agnostic-mask" / person_name.replace(".jpg", "_mask.png")
+                if not mask_path.exists():
+                    mask_path = split_root / "agnostic" / person_name
+                samples.append(dict(
+                    id=os.path.splitext(person_name)[0],
+                    person_path=person_path,
+                    cloth_path=cloth_path if cloth_path.exists() else person_path,
+                    gt_path=person_path,
+                    mask_path=mask_path if mask_path.exists() else None,
+                ))
+            return samples
 
         samples = []
         with open(pairs_file) as f:
@@ -117,10 +154,13 @@ class VITONHDDataset(BaseTryOnDataset):
                     continue
                 parts = line.split()
                 person_name, cloth_name = parts[0], parts[1]
-                person_path = self.root / self.split / "image" / person_name
-                cloth_path  = self.root / self.split / "cloth" / cloth_name
+                person_path = split_root / "image" / person_name
+                cloth_path  = split_root / "cloth" / cloth_name
                 gt_path     = person_path
-                mask_path   = self.root / self.split / "agnostic-mask" / person_name.replace(".jpg", "_mask.png")
+                # agnostic mask: prefer 'agnostic-mask' dir, fall back to 'agnostic'
+                mask_path = split_root / "agnostic-mask" / person_name.replace(".jpg", "_mask.png")
+                if not mask_path.exists():
+                    mask_path = split_root / "agnostic" / person_name
                 samples.append(dict(
                     id=person_name,
                     person_path=person_path,
@@ -152,15 +192,30 @@ class DressCodeDataset(BaseTryOnDataset):
         super().__init__(root, split, **kwargs)
 
     def _load_samples(self) -> List[Dict]:
-        pairs_file = self.root / f"{self.category}_pairs_{self.split}.txt"
-        if not pairs_file.exists():
-            # Try alternate naming
-            pairs_file = self.root / f"{self.split}_pairs.txt"
-
-        if not pairs_file.exists():
-            raise FileNotFoundError(f"pairs file not found: {pairs_file}")
-
         cat_dir = self.root / self.category
+
+        # New structure: pairs files live inside each category folder.
+        # Search order: test_pairs_paired.txt, test_pairs_unpaired.txt,
+        # train_pairs.txt, then legacy root-level locations.
+        pairs_file = None
+        for candidate in (
+            cat_dir / f"{self.split}_pairs_paired.txt",
+            cat_dir / f"{self.split}_pairs_unpaired.txt",
+            cat_dir / f"{self.split}_pairs.txt",
+            cat_dir / "train_pairs.txt",
+            self.root / f"{self.category}_pairs_{self.split}.txt",
+            self.root / f"{self.split}_pairs.txt",
+        ):
+            if candidate.exists():
+                pairs_file = candidate
+                break
+
+        if pairs_file is None:
+            raise FileNotFoundError(
+                f"No pairs file found for category '{self.category}', split '{self.split}' "
+                f"in {cat_dir} or {self.root}"
+            )
+
         samples = []
         with open(pairs_file) as f:
             for line in f:
@@ -168,13 +223,14 @@ class DressCodeDataset(BaseTryOnDataset):
                 if not line:
                     continue
                 parts = line.split()
-                person_id, cloth_id = parts[0], parts[1]
-                person_path = cat_dir / "images"  / f"{person_id}_0.jpg"
-                gt_path     = cat_dir / "images"  / f"{person_id}_1.jpg"
-                cloth_path  = cat_dir / "clothes" / f"{cloth_id}_1.jpg"
-                mask_path   = cat_dir / "label_maps" / f"{person_id}_0.png"
+                person_name = parts[0]                    # e.g. "020714_0.jpg"
+                cloth_name  = parts[1] if len(parts) > 1 else parts[0]  # e.g. "020714_1.jpg"
+                person_path = cat_dir / "image"  / person_name
+                cloth_path  = cat_dir / "cloth"  / cloth_name
+                gt_path     = person_path   # paired – person IS the GT
+                mask_path   = cat_dir / "mask" / person_name.replace(".jpg", ".png")
                 samples.append(dict(
-                    id=person_id,
+                    id=os.path.splitext(person_name)[0],
                     person_path=person_path,
                     cloth_path=cloth_path,
                     gt_path=gt_path,
@@ -484,11 +540,56 @@ class OVNetDataset(BaseTryOnDataset):
 # ─────────────────────────────────────────────────────────────────────────────
 # 11. StreetTryOn
 # ─────────────────────────────────────────────────────────────────────────────
-class StreetTryOnDataset(VITONHDDataset):
+class StreetTryOnDataset(BaseTryOnDataset):
     """
-    Street-style try-on dataset. Mirrors VITON-HD structure.
+    Street-style try-on dataset.
+
+    Expected structure (benchmark_datasets/street_tryon/):
+        <root>/
+          train/
+            image/
+            segm_simplified_8labels/
+            ...
+          validation/
+            image/
+            segm_simplified_8labels/
+            ...
+          annotations/
+            shop2street_test_pairs_top.csv
+            street2street_test_pairs_*.csv
+            ...
+
+    Note: there is no explicit 'test/' split.  When split='test' the loader
+    falls back to 'validation/' images.
     """
-    pass
+
+    def _load_samples(self) -> List[Dict]:
+        # street_tryon has only train/ and validation/ — map 'test' → 'validation'
+        actual_split = "validation" if self.split == "test" else self.split
+        split_dir = self.root / actual_split
+        image_dir = split_dir / "image"
+
+        if not image_dir.exists():
+            raise FileNotFoundError(
+                f"Image directory not found: {image_dir}\n"
+                f"Expected street_tryon root at: {self.root}"
+            )
+
+        samples = []
+        for img_file in sorted(os.listdir(image_dir)):
+            if not img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                continue
+            person_path = image_dir / img_file
+            # Use simplified segmentation as mask when available
+            seg_path = split_dir / "segm_simplified_8labels" / img_file.replace(".jpg", ".png")
+            samples.append(dict(
+                id=os.path.splitext(img_file)[0],
+                person_path=person_path,
+                cloth_path=person_path,   # no separate garment images in this split
+                gt_path=person_path,
+                mask_path=seg_path if seg_path.exists() else None,
+            ))
+        return samples
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 12. CurvTON (Custom Dataset)
