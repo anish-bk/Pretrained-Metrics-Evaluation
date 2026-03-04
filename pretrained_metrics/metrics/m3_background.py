@@ -161,7 +161,13 @@ class _ObjectDetector:
                 img_masked = imgs[i].clone()
                 img_masked[:, person_masks[i]] = 0.0
                 pil = TF.to_pil_image(img_masked.clamp(0, 1).cpu()).convert("RGB")
-                inputs = self._feature(images=pil, return_tensors="pt").to(self.device)
+                if pil.width < 32 or pil.height < 32:
+                    pil = pil.resize((224, 224))
+                inputs = self._feature(
+                    images=pil,
+                    return_tensors="pt",
+                    input_data_format="channels_last",
+                ).to(self.device)
                 outs   = self._model(**inputs)
                 probs  = outs.logits.softmax(-1)[0, :, :-1]   # drop 'no-object'
                 conf   = probs.max(-1).values
