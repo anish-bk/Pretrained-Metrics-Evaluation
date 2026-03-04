@@ -45,9 +45,8 @@ class LAIONRVSFashionDataset(Dataset):
         local_dir: str | Path | None = None,
         **kwargs,
     ):
-        from datasets import _hf_import
-        hf_load_dataset = _hf_import("load_dataset")
-        load_from_disk  = _hf_import("load_from_disk")
+        import pandas as pd
+        from huggingface_hub import HfFileSystem
 
         self.transform = T.Compose([T.Resize(img_size), T.ToTensor()])
         self.data = []
@@ -60,74 +59,48 @@ class LAIONRVSFashionDataset(Dataset):
             local_candidate = Path(local_dir)
 
         if local_candidate.exists():
+            # Try load_from_disk (HuggingFace save_to_disk format)
             try:
+                from datasets import _hf_import
+                load_from_disk = _hf_import("load_from_disk")
                 ds = load_from_disk(str(local_candidate))
-            except Exception:
-                ds = None
-
-            if ds is not None:
-                # DatasetDict or Dataset saved on disk
                 try:
                     hf_ds = ds[split]
                 except Exception:
                     hf_ds = ds
-
-                # Materialise up to `limit` samples via indexing (non-streaming)
                 for i in range(min(len(hf_ds), limit)):
                     self.data.append(hf_ds[i])
-            else:
-                # Fallback to streaming from HF hub
-                hf_ds = hf_load_dataset("Slep/LAION-RVS-Fashion", streaming=True)[split]
-                it = iter(hf_ds)
-                for _ in range(limit):
-                    try:
-                        self.data.append(next(it))
-                    except StopIteration:
-                        break
-        else:
-            # Default: streaming from HuggingFace Hub
-            hf_ds = hf_load_dataset("Slep/LAION-RVS-Fashion", streaming=True)[split]
-            it = iter(hf_ds)
-            for _ in range(limit):
-                try:
-                    self.data.append(next(it))
-                except StopIteration:
-                    break
-                except Exception:
-                    # CastError (schema mismatch on a shard) terminates the generator;
-                    # break and fall through to the data-*.parquet retry below.
-                    break
+                return  # loaded from disk – done
+            except Exception:
+                pass  # fall through to pandas read from Hub
 
-        # Retry with raw parquet builder if the primary stream yielded nothing.
-        # distractors_metadata.parquet has an extra CATEGORY column and a null
-        # PRODUCT_ID that cause CastError when datasets tries to cast to the
-        # schema declared in the dataset card.  Loading as "parquet" with an
-        # explicit data_files glob skips that shard and auto-detects features.
-        if not self.data:
+        # Primary path: read parquet files directly from HuggingFace Hub via
+        # pandas + HfFileSystem.  This bypasses the datasets streaming/
+        # fingerprinting machinery entirely, avoiding both:
+        #   - CastError from distractors_metadata.parquet (schema mismatch), and
+        #   - RuntimeError: RLock objects should only be shared between processes
+        #     through inheritance (caused by sys.modules manipulation in _hf_import
+        #     corrupting internal datasets state before dill fingerprinting).
+        try:
+            fs = HfFileSystem()
+            files = sorted(
+                f for f in fs.glob(
+                    f"datasets/Slep/LAION-RVS-Fashion/data/{split}/*.parquet"
+                )
+                if not f.split("/")[-1].startswith("distractors")
+            )
+            for fpath in files:
+                df = pd.read_parquet(f"hf://{fpath}")
+                for _, row in df.iterrows():
+                    self.data.append(row.to_dict())
+                    if len(self.data) >= limit:
+                        return
+        except Exception as exc:
             import warnings
             warnings.warn(
-                "[LAIONRVSFashionDataset] Primary stream yielded no data (likely "
-                "CastError on distractors_metadata.parquet). "
-                "Retrying with data-*.parquet shards only.",
+                f"[LAIONRVSFashionDataset] Could not load LAION data: {exc}",
                 stacklevel=2,
             )
-            try:
-                _glob = f"hf://datasets/Slep/LAION-RVS-Fashion/data/{split}/data-*.parquet"
-                fallback_ds = hf_load_dataset(
-                    "parquet",
-                    data_files={split: _glob},
-                    streaming=True,
-                )[split]
-                it = iter(fallback_ds)
-                for _ in range(limit):
-                    try:
-                        self.data.append(next(it))
-                    except StopIteration:
-                        break
-                    except Exception:
-                        break
-            except Exception:
-                pass  # leave self.data empty; caller handles missing data
 
     def __len__(self) -> int:
         return len(self.data)

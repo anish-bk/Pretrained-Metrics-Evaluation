@@ -157,22 +157,11 @@ class AnishLAIONDataset(Dataset):
             local_dir = _Path(local_dir)
 
         if local_dir.exists():
+            # Try load_from_disk (HuggingFace save_to_disk format)
             try:
-                import sys as _sys, pathlib as _pathlib
-                _ws   = str(_pathlib.Path(__file__).parent.parent)
-                _pbak = _sys.path[:]
-                _mbak = {k: v for k, v in _sys.modules.items()
-                         if k == "datasets" or k.startswith("datasets.")}
-                _sys.path = [p for p in _sys.path if p not in (_ws, "")]
-                for _k in list(_mbak): _sys.modules.pop(_k, None)
-                try:
-                    from datasets import load_from_disk as _load_from_disk
-                finally:
-                    _sys.path[:] = _pbak
-                    _sys.modules.update(_mbak)
-
+                from datasets import _hf_import as _hfimport
+                _load_from_disk = _hfimport("load_from_disk")
                 ds = _load_from_disk(str(local_dir))
-                # DatasetDict or plain Dataset saved with save_to_disk
                 try:
                     hf_ds = ds[split]
                 except (KeyError, TypeError):
@@ -181,59 +170,29 @@ class AnishLAIONDataset(Dataset):
                     self.data.append(hf_ds[i])
                 return   # loaded from disk – done
             except Exception:
-                pass  # fall through to streaming
+                pass  # fall through to Hub pandas fallback
 
-        # Fallback: stream from HuggingFace Hub
-        import sys as _sys, pathlib as _pathlib
-        _ws   = str(_pathlib.Path(__file__).parent.parent)
-        _pbak = _sys.path[:]
-        _mbak = {k: v for k, v in _sys.modules.items()
-                 if k == "datasets" or k.startswith("datasets.")}
-        _sys.path = [p for p in _sys.path if p not in (_ws, "")]
-        for _k in list(_mbak): _sys.modules.pop(_k, None)
+        # Fallback: read parquet files directly from HuggingFace Hub via pandas.
+        # This completely avoids the datasets streaming/fingerprinting machinery
+        # (which causes RLock pickle errors) and the CastError from schema
+        # mismatches in distractors_metadata.parquet.
         try:
-            from datasets import load_dataset as _load_dataset
-        finally:
-            _sys.path[:] = _pbak
-            _sys.modules.update(_mbak)
-        self.hf_dataset = _load_dataset("Slep/LAION-RVS-Fashion", streaming=True)[split]
-        self.limit = limit
-        self._prepare()
-
-        # If the primary stream yielded nothing (e.g. CastError on a parquet shard
-        # whose schema differs from the dataset card – typically
-        # distractors_metadata.parquet has an extra CATEGORY column), retry by
-        # loading only the well-formed data-*.parquet shards via the raw parquet
-        # builder, which auto-detects features per-file and never raises CastError.
-        if not self.data:
-            import warnings
-            warnings.warn(
-                "[AnishLAIONDataset] Streaming load failed (likely schema mismatch "
-                "in distractors_metadata.parquet). Retrying with data-*.parquet shards only.",
-                stacklevel=2,
+            from huggingface_hub import HfFileSystem as _HfFileSystem
+            import pandas as _pd
+            _fs = _HfFileSystem()
+            _files = sorted(
+                f for f in _fs.glob(f"datasets/Slep/LAION-RVS-Fashion/data/{split}/*.parquet")
+                if not f.split("/")[-1].startswith("distractors")
             )
-            try:
-                _glob = f"hf://datasets/Slep/LAION-RVS-Fashion/data/{split}/data-*.parquet"
-                self.hf_dataset = _load_dataset(
-                    "parquet",
-                    data_files={split: _glob},
-                    streaming=True,
-                )[split]
-                self._prepare()
-            except Exception:
-                pass  # leave self.data empty; caller handles missing data
-
-    def _prepare(self):
-        it = iter(self.hf_dataset)
-        for _ in range(self.limit):
-            try:
-                self.data.append(next(it))
-            except StopIteration:
-                break
-            except Exception:
-                # CastError (schema mismatch) or other per-shard failure terminates
-                # the HuggingFace generator entirely – break rather than spinning.
-                break
+            for _f in _files:
+                _df = _pd.read_parquet(f"hf://{_f}")
+                for _, row in _df.iterrows():
+                    self.data.append(row.to_dict())
+                    if len(self.data) >= limit:
+                        return
+        except Exception as _e:
+            import warnings
+            warnings.warn(f"[AnishLAIONDataset] Could not load LAION data: {_e}", stacklevel=2)
 
     def __len__(self): return len(self.data)
 
