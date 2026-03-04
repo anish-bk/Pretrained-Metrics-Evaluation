@@ -126,6 +126,7 @@ class FeatureExtractor:
         img_size: Tuple[int, int] = (512, 384),
         force: bool = False,
         use_anish: bool = False,
+        cache_label: str = None,
         **dl_kwargs,
     ) -> Dict[str, np.ndarray]:
         """
@@ -145,13 +146,16 @@ class FeatureExtractor:
         img_size     : (H, W)
         force        : bool   — re-extract even if cache exists
         use_anish    : bool   — use dedicated Anish dataloaders
+        cache_label  : str    — override the cache filename stem
+                                (useful for dresscode categories:
+                                 ``"dresscode_upper_body"`` etc.)
         **dl_kwargs  : forwarded to get_dataloader (e.g. category for DressCode)
 
         Returns
         -------
         dict of numpy arrays (per-image features)
         """
-        cp = self.cache_path(dataset_name)
+        cp = self.cache_path(cache_label or dataset_name)
         if cp.exists() and not force:
             print(f"[FeatureExtractor] Loading cached features → {cp}")
             return dict(np.load(cp, allow_pickle=True))
@@ -169,7 +173,8 @@ class FeatureExtractor:
             if dataset_name.lower() in ["dresscode", "vitonhd", "laion"]:
                 dataset_name = f"{dataset_name.lower()}_anish"
 
-        print(f"\n[FeatureExtractor] Extracting '{dataset_name}' (split={split}) …")
+        label_for_print = cache_label or dataset_name
+        print(f"\n[FeatureExtractor] Extracting '{label_for_print}' (split={split}) …")
 
         # ── DataLoader ────────────────────────────────────────────────── #
         loader = get_dataloader(

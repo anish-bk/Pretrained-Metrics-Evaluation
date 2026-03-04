@@ -240,6 +240,8 @@ def _parse():
     p.add_argument("--no_pairplot",     action="store_true")
     p.add_argument("--dresscode_category", type=str, default="upper_body")
     p.add_argument("--use_anish", action="store_true", help="Use dedicated dataloaders from dataloaders_anish/")
+    p.add_argument("--no_resume",  action="store_true",
+                   help="Ignore checkpoint and re-extract all datasets from scratch.")
     return p.parse_args()
 
 
@@ -248,6 +250,43 @@ try:
     import config
 except ImportError:
     config = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Checkpoint helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _eda_cache_label(name: str, cfg: dict) -> str:
+    """Unique label used for both the cache filename and the checkpoint key."""
+    cat = cfg.get("dresscode_category", "")
+    return f"{name}_{cat}" if cat else name
+
+
+def _load_eda_checkpoint(cache_dir: str) -> set:
+    """Returns a set of cache_labels that have already been extracted."""
+    import json
+    path = Path(cache_dir) / "eda_checkpoint.json"
+    if not path.exists():
+        return set()
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        done = set(data.get("completed", []))
+        if done:
+            print(f"  [Resume] {len(done)} dataset(s) already done: {', '.join(sorted(done))}")
+        return done
+    except Exception as e:
+        print(f"  [Resume] Could not read EDA checkpoint ({e}). Starting fresh.")
+        return set()
+
+
+def _write_eda_checkpoint(done: set, cache_dir: str):
+    """Persist the set of completed cache_labels."""
+    import json
+    path = Path(cache_dir) / "eda_checkpoint.json"
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"completed": sorted(done)}, f, indent=2)
 
 
 def main():
@@ -287,44 +326,77 @@ def main():
     from feature_extractor import FeatureExtractor
     extractor = FeatureExtractor(device=args.device, cache_dir=args.cache_dir)
 
+    resume  = not args.no_resume
+    force   = args.no_resume          # only force when explicitly asked
+    done    = _load_eda_checkpoint(args.cache_dir) if resume else set()
+
     base_kwargs = dict(
         split=args.split,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         img_size=tuple(args.img_size),
-        force=not args.skip_extraction,
+        force=force,
         use_anish=args.use_anish,
     )
 
     all_data: Dict[str, dict] = {}
+
+    # Pre-load already-completed datasets so figures can still be generated
+    for label in done:
+        cp = Path(args.cache_dir) / f"{label}_features.npz"
+        if cp.exists():
+            all_data[label] = dict(np.load(cp, allow_pickle=True))
 
     if args.config:
         with open(args.config) as f:
             raw = yaml.safe_load(f)
         defaults = raw.get("defaults", {})
         for entry in raw.get("datasets", []):
-            cfg = {**defaults, **entry}
-            name = cfg.get("name")
-            root = cfg.get("root")
+            cfg         = {**defaults, **entry}
+            name        = cfg.get("name")
+            root        = cfg.get("root")
+            cache_label = _eda_cache_label(name, cfg)
+
+            if cache_label in done:
+                print(f"\n  [Skip] {cache_label} (already extracted — use --no_resume to redo)")
+                continue
+
             if not root and config:
                 root = config.get_root(name)
-            kw   = {**base_kwargs}
+            kw = {**base_kwargs, "cache_label": cache_label}
             if "dresscode" in name.lower():
                 kw["dresscode_category"] = cfg.get("dresscode_category",
                                                     args.dresscode_category)
-            all_data[name] = extractor.extract(name, root, **kw)
+            try:
+                all_data[cache_label] = extractor.extract(name, root, **kw)
+                done.add(cache_label)
+                _write_eda_checkpoint(done, args.cache_dir)
+                print(f"  [Checkpoint] Saved ({len(done)} dataset(s) done).")
+            except Exception as e:
+                print(f"  [ERROR] {cache_label}: {e}")
+                import traceback; traceback.print_exc()
 
     elif args.dataset:
-        root = args.root
-        if not root and config:
-            root = config.get_root(args.dataset)
-        kw = {**base_kwargs}
-        if "dresscode" in args.dataset.lower():
-            kw["dresscode_category"] = args.dresscode_category
-        all_data[args.dataset] = extractor.extract(args.dataset, root, **kw)
+        root        = args.root
+        cache_label = _eda_cache_label(args.dataset, {"dresscode_category": args.dresscode_category})
+        if cache_label in done:
+            print(f"\n  [Skip] {cache_label} already extracted. Use --no_resume to redo.")
+        else:
+            if not root and config:
+                root = config.get_root(args.dataset)
+            kw = {**base_kwargs, "cache_label": cache_label}
+            if "dresscode" in args.dataset.lower():
+                kw["dresscode_category"] = args.dresscode_category
+            all_data[cache_label] = extractor.extract(args.dataset, root, **kw)
+            done.add(cache_label)
+            _write_eda_checkpoint(done, args.cache_dir)
 
     else:
         print("[EDA] No action. Use --dry_run, --dataset+--root, --config, or --figs_only.")
+        return
+
+    if not all_data:
+        print("\n  [EDA] No data to plot.")
         return
 
     run_all_plots(all_data, out_root=args.out_dir,
