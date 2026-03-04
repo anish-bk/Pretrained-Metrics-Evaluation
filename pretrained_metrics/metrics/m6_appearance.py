@@ -82,7 +82,7 @@ class _FaceEmbedder:
                 raise ImportError("'clip' package installed is not openai/clip "
                                   "(missing 'load'). Try: pip install openai-clip")
             self._clip_model, self._clip_preprocess = _oa_clip.load(
-                "ViT-B/32", device=device
+                "ViT-B/32", device=self.device
             )
             self._clip_model.eval()
             self._backend = "clip"
@@ -99,7 +99,7 @@ class _FaceEmbedder:
             self._oc_model, _, self._oc_preprocess = open_clip.create_model_and_transforms(
                 "ViT-B-32", pretrained="laion2b_s34b_b79k"
             )
-            self._oc_model = self._oc_model.to(device).eval()
+            self._oc_model = self._oc_model.to(self.device).eval()
             self._backend = "open_clip"
             self.EMBED_DIM = 512
             print("[AppearanceMetric] Using open_clip ViT-B/32 as face proxy.")
