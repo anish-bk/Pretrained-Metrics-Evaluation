@@ -106,8 +106,12 @@ class _SegBackend:
         """
         DeepLabV3 is trained on Pascal VOC (21 classes).
         class 15 = person; the rest we treat as 'other'.
-        We approximate garment pixels as the *lower* 60% of the person mask,
-        and arms as the *upper* 40%.
+
+        Arm/garment separation via morphological erosion:
+          - Heavy erosion removes thin appendages (arms) → remaining core ≈ torso/garment
+          - arm pixels = person_mask & ~core
+        This avoids the row-split bug where garment and arms were mutually
+        exclusive by construction and could never overlap.
         """
         norm = T.Normalize(mean=[0.485, 0.456, 0.406],
                            std=[0.229, 0.224, 0.225])
@@ -115,18 +119,24 @@ class _SegBackend:
         out  = self._model(x)["out"]                 # (B, 21, H, W)
         pred = out.argmax(1)                          # (B, H, W) int64
 
-        person_mask  = (pred == 15)                  # (B, H, W) bool
+        person_mask = (pred == 15).float()            # (B, H, W) float32
 
-        # Split person into "garment" (lower torso) and "arms" (upper)
-        split = int(H * 0.4)
-        garment   = person_mask.clone()
-        garment[:, :split, :] = False                # upper rows → NOT garment
+        # ── Morphological erosion to isolate core body (garment proxy) ────────
+        # Kernel size ≈ 1/12 of the shorter image dimension; must be odd & ≥ 11.
+        k = max(H, W) // 12
+        if k % 2 == 0:
+            k += 1
+        k = max(k, 11)
+        pm4  = person_mask.unsqueeze(1)              # (B, 1, H, W)
+        # Erosion = −MaxPool(−x)
+        core = -F.max_pool2d(-pm4, kernel_size=k, stride=1, padding=k // 2)
+        core = (core > 0.5).squeeze(1)               # (B, H, W) bool
 
-        arms      = person_mask.clone()
-        arms[:, split:, :] = False                   # lower rows → NOT arms
-
-        hair      = torch.zeros_like(person_mask)    # DeepLabV3 has no hair class
-        other     = (~person_mask) & (pred != 0)     # non-background, non-person
+        # Garment ≈ eroded core (thick torso); arms ≈ thin protrusions removed by erosion
+        garment = core
+        arms    = person_mask.bool() & ~core
+        hair    = torch.zeros_like(garment)          # DeepLabV3 has no hair class
+        other   = (~person_mask.bool()) & (pred != 0) # non-background, non-person
 
         return {
             "garment": garment.cpu(),
