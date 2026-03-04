@@ -158,8 +158,20 @@ class AnishLAIONDataset(Dataset):
 
         if local_dir.exists():
             try:
-                from datasets import load_from_disk
-                ds = load_from_disk(str(local_dir))
+                import sys as _sys, pathlib as _pathlib
+                _ws   = str(_pathlib.Path(__file__).parent.parent)
+                _pbak = _sys.path[:]
+                _mbak = {k: v for k, v in _sys.modules.items()
+                         if k == "datasets" or k.startswith("datasets.")}
+                _sys.path = [p for p in _sys.path if p not in (_ws, "")]
+                for _k in list(_mbak): _sys.modules.pop(_k, None)
+                try:
+                    from datasets import load_from_disk as _load_from_disk
+                finally:
+                    _sys.path[:] = _pbak
+                    _sys.modules.update(_mbak)
+
+                ds = _load_from_disk(str(local_dir))
                 # DatasetDict or plain Dataset saved with save_to_disk
                 try:
                     hf_ds = ds[split]
@@ -172,8 +184,19 @@ class AnishLAIONDataset(Dataset):
                 pass  # fall through to streaming
 
         # Fallback: stream from HuggingFace Hub
-        from datasets import load_dataset
-        self.hf_dataset = load_dataset("Slep/LAION-RVS-Fashion", streaming=True)[split]
+        import sys as _sys, pathlib as _pathlib
+        _ws   = str(_pathlib.Path(__file__).parent.parent)
+        _pbak = _sys.path[:]
+        _mbak = {k: v for k, v in _sys.modules.items()
+                 if k == "datasets" or k.startswith("datasets.")}
+        _sys.path = [p for p in _sys.path if p not in (_ws, "")]
+        for _k in list(_mbak): _sys.modules.pop(_k, None)
+        try:
+            from datasets import load_dataset as _load_dataset
+        finally:
+            _sys.path[:] = _pbak
+            _sys.modules.update(_mbak)
+        self.hf_dataset = _load_dataset("Slep/LAION-RVS-Fashion", streaming=True)[split]
         self.limit = limit
         self._prepare()
 
