@@ -1,27 +1,28 @@
 """
 metrics/m5_body_shape.py
 =========================
-Metric 5 — Body Shape Diversity
+Metric 5 - Body Shape Diversity
 ---------------------------------
-Uses SMPL shape coefficients β ∈ R^10 extracted from HMR2.0 or a proxy.
+Uses SMPL shape coefficients beta in R^10 extracted from HMR2.0 or a proxy.
 
-D_shape = log det(Cov(β) + ε·I)
+D_shape = log det(Cov(beta) + eps*I)
 
 Pretrained model
 -----------------
-HMR2.0 (4D-Humans) — direct successor to SPIN from the same research lineage.
-Weights are downloaded automatically from HuggingFace on first use.
+HMR2.0 (4D-Humans) - direct successor to SPIN from the same research lineage.
+Weights are downloaded automatically on first use.
   pip install git+https://github.com/shubham-goel/4D-Humans.git
 
 Backend priority:
-  Level 1 — HMR2.0:       Genuine β ∈ R^10 SMPL shape coefficients.
+  Level 1 - HMR2.0:       Genuine beta in R^10 SMPL shape coefficients.
              Requires:  pip install git+https://github.com/shubham-goel/4D-Humans.git
-             Weights:   auto-downloaded from HuggingFace (shubham-goel/4D-Humans)
-                        on first use — no manual checkpoint needed.
-  Level 2 — ViT-B/16 proxy:  10-D projection of ViT CLS embedding.
-             NOT equivalent to SMPL β, but captures body-shape variety.
+             Weights:   auto-downloaded on first use, cached to ~/.cache/4DHumans/
+             SMPL file: place basicModel_neutral_lbs_10_207_0_v1.0.0.pkl at
+                        ~/.cache/4DHumans/data/  (download from smplify.is.tue.mpg.de)
+  Level 2 - ViT-B/16 proxy:  10-D projection of ViT CLS embedding.
+             NOT equivalent to SMPL beta, but captures body-shape variety.
              Requires:  pip install timm
-  Level 3 — Random stub (smoke-test only).
+  Level 3 - Random stub (smoke-test only).
 
 Input
 ------
@@ -30,8 +31,8 @@ person_imgs : torch.Tensor  (B, 3, H, W)  float32  [0, 1]
 Returns (compute())
 --------------------
 dict with:
-    shape_diversity_logdet   : log det(Cov(β) + ε·I)
-    shape_variance_total     : sum of eigenvalues of Cov(β)  (total variance)
+    shape_diversity_logdet   : log det(Cov(beta) + eps*I)
+    shape_variance_total     : sum of eigenvalues of Cov(beta)  (total variance)
     shape_dims               : number of shape coefficients (10)
     backend                  : "hmr2", "vit_proxy", or "stub"
 """
@@ -47,9 +48,9 @@ import torchvision.transforms.functional as TF
 import torchvision.transforms as T
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Shape extractor — backend priority: HMR2.0 → ViT proxy → stub
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Shape extractor - backend priority: HMR2.0 -> ViT proxy -> stub
+# -----------------------------------------------------------------------------
 
 class _ShapeExtractor:
     SHAPE_DIM = 10
@@ -87,15 +88,21 @@ class _ShapeExtractor:
         try:
             from hmr2.models import download_models, load_hmr2, DEFAULT_CHECKPOINT
 
+            # PyTorch 2.6 changed torch.load default to weights_only=True.
+            # HMR2.0 checkpoints embed omegaconf objects which are not in the
+            # default allowlist. Register them before loading.
+            import torch.serialization as _ts
+            from omegaconf import DictConfig as _DictConfig, ListConfig as _ListConfig
+            _ts.add_safe_globals([_DictConfig, _ListConfig])
+
             # download_models() fetches the checkpoint if not already cached.
-            # It returns None — the actual path is exposed via DEFAULT_CHECKPOINT.
+            # Returns None - the path is exposed via DEFAULT_CHECKPOINT.
             download_models()
             self._hmr2_model, self._hmr2_cfg = load_hmr2(DEFAULT_CHECKPOINT)
             self._hmr2_model = self._hmr2_model.to(self.device).eval()
 
             self._backend = "hmr2"
-            print("[BodyShapeMetric] HMR2.0 loaded ✓  "
-                  "(weights auto-downloaded from HuggingFace).")
+            print("[BodyShapeMetric] HMR2.0 loaded (weights cached at ~/.cache/4DHumans/).")
             return True
 
         except ImportError:
@@ -133,7 +140,7 @@ class _ShapeExtractor:
     def __call__(self, imgs: torch.Tensor) -> np.ndarray:
         """
         imgs : (B, 3, H, W)  float32  [0,1]
-        Returns (B, 10) numpy float32 — SMPL β or proxy.
+        Returns (B, 10) numpy float32 - SMPL beta or proxy.
         """
         B = imgs.shape[0]
 
@@ -154,10 +161,10 @@ class _ShapeExtractor:
     # ------------------------------------------------------------------ #
     def _hmr2_forward(self, imgs: torch.Tensor) -> np.ndarray:
         """
-        HMR2.0 expects images at 256×192 (W×H), normalised with ImageNet stats.
-        Output dict contains 'pred_smpl_params' → 'betas' : (B, 10).
+        HMR2.0 expects images at 256x192 (WxH), normalised with ImageNet stats.
+        Output dict contains 'pred_smpl_params' -> 'betas' : (B, 10).
         """
-        # HMR2.0 canonical input size: 256 wide × 192 tall
+        # HMR2.0 canonical input size: 256 wide x 192 tall
         x = TF.resize(imgs, [192, 256]).to(self.device)
         x = torch.stack([self._NORMALIZE(im) for im in x])
 
@@ -169,9 +176,9 @@ class _ShapeExtractor:
         return betas.detach().cpu().numpy()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BodyShapeMetrics  (public API — unchanged)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# BodyShapeMetrics  (public API - unchanged)
+# -----------------------------------------------------------------------------
 
 class BodyShapeMetrics:
 
