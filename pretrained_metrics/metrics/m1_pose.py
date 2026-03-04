@@ -127,6 +127,10 @@ class _KeypointExtractor:
                 # fallback: pooled — return stub
                 return self._stub(B, H_in, W_in)
             B2, J, Hh, Ww = feats.shape
+            # HRNet forward_features may return CNN feature maps (not heatmaps).
+            # Only treat channels as keypoint heatmaps when J == 17 (COCO joints).
+            if J != 17:
+                return self._stub(B, H_in, W_in)
             flat = feats.view(B2, J, -1).argmax(-1)        # (B, J)
             ys   = (flat // Ww).float() / Hh * H_in
             xs   = (flat %  Ww).float() / Ww * W_in
@@ -257,11 +261,12 @@ class PoseMetrics:
             }
 
         # 1A — Diversity
-        V   = np.stack(self._pose_vecs, axis=0)    # (N, 34)
+        V   = np.stack(self._pose_vecs, axis=0)    # (N, D)
+        D   = V.shape[1]
         mu  = V.mean(axis=0, keepdims=True)
         Vc  = V - mu
-        cov = (Vc.T @ Vc) / max(len(V) - 1, 1)    # (34, 34)
-        reg = cov + self.eps * np.eye(34)
+        cov = (Vc.T @ Vc) / max(len(V) - 1, 1)    # (D, D)
+        reg = cov + self.eps * np.eye(D)
         sign, log_det = np.linalg.slogdet(reg)
         d_pose = float(log_det) if sign > 0 else float("nan")
 
