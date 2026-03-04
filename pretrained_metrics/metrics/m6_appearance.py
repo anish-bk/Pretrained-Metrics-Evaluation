@@ -75,19 +75,37 @@ class _FaceEmbedder:
         except Exception as e:
             print(f"[AppearanceMetric] InsightFace unavailable ({e}).")
 
-        # Try CLIP ViT-B/32
+        # Try openai/clip (package name: openai-clip)
         try:
-            import clip
-            self._clip_model, self._clip_preprocess = clip.load(
+            import clip as _oa_clip
+            if not hasattr(_oa_clip, "load"):
+                raise ImportError("'clip' package installed is not openai/clip "
+                                  "(missing 'load'). Try: pip install openai-clip")
+            self._clip_model, self._clip_preprocess = _oa_clip.load(
                 "ViT-B/32", device=device
             )
             self._clip_model.eval()
             self._backend = "clip"
             self.EMBED_DIM = 512
-            print("[AppearanceMetric] Using CLIP ViT-B/32 as face-embedding proxy.")
+            print("[AppearanceMetric] Using CLIP ViT-B/32 (openai) as face proxy.")
             return
         except Exception as e:
-            print(f"[AppearanceMetric] CLIP unavailable ({e}). Using random stub.")
+            print(f"[AppearanceMetric] openai/clip unavailable ({e}).")
+
+        # Try open_clip_torch (pip install open_clip_torch) — different import name,
+        # unaffected by numpy ABI issues that break the transformers-based HF CLIP.
+        try:
+            import open_clip
+            self._oc_model, _, self._oc_preprocess = open_clip.create_model_and_transforms(
+                "ViT-B-32", pretrained="laion2b_s34b_b79k"
+            )
+            self._oc_model = self._oc_model.to(device).eval()
+            self._backend = "open_clip"
+            self.EMBED_DIM = 512
+            print("[AppearanceMetric] Using open_clip ViT-B/32 as face proxy.")
+            return
+        except Exception as e:
+            print(f"[AppearanceMetric] open_clip unavailable ({e}). Using random stub.")
 
         self._backend = "stub"
 
@@ -109,11 +127,27 @@ class _FaceEmbedder:
         if self._backend == "arcface":
             return self._arcface_embeddings(imgs)
 
-        if self._backend == "clip":
+        if self._backend in ("clip", "open_clip"):
             return self._clip_embeddings(imgs)
 
         rng = np.random.default_rng(42)
         return rng.normal(0, 1, (B, self.EMBED_DIM)).astype(np.float32)
+
+    def _clip_embeddings(self, imgs: torch.Tensor) -> np.ndarray:
+        """Shared encoder for both openai/clip and open_clip backends."""
+        face_crops = torch.stack(
+            [self._crop_face_region(imgs[i]) for i in range(imgs.shape[0])]
+        )
+        pils = [TF.to_pil_image(fc.clamp(0, 1).cpu()) for fc in face_crops]
+        if self._backend == "open_clip":
+            import open_clip
+            inp = torch.stack([self._oc_preprocess(p) for p in pils]).to(self.device)
+            emb = self._oc_model.encode_image(inp)
+        else:
+            inp = torch.stack([self._clip_preprocess(p) for p in pils]).to(self.device)
+            emb = self._clip_model.encode_image(inp)
+        emb = F.normalize(emb.float(), dim=-1)
+        return emb.cpu().numpy()
 
     def _arcface_embeddings(self, imgs: torch.Tensor) -> np.ndarray:
         import cv2

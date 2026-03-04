@@ -57,19 +57,36 @@ class _GarmentEncoder:
 
     # --------------------------------------------------------------------- #
     def _load(self):
-        # Try openai/clip
+        # Try openai/clip (package: openai-clip)
         try:
-            import clip as openai_clip
-            self._clip, self._preprocess = openai_clip.load(
+            import clip as _oa_clip
+            if not hasattr(_oa_clip, "load"):
+                raise ImportError("'clip' package installed is not openai/clip "
+                                  "(missing 'load'). Try: pip install openai-clip")
+            self._clip, self._preprocess = _oa_clip.load(
                 "ViT-B/32", device=self.device
             )
             self._clip.eval()
             self._backend = "openai_clip"
             self.embed_dim = 512
-            print("[GarmentMetric] Using CLIP ViT-B/32 for garment embeddings.")
+            print("[GarmentMetric] Using CLIP ViT-B/32 (openai) for garment embeddings.")
             return
         except Exception as e:
             print(f"[GarmentMetric] openai/clip unavailable ({e}).")
+
+        # Try open_clip_torch — different package name, numpy-ABI-safe
+        try:
+            import open_clip
+            self._oc_model, _, self._oc_preprocess = open_clip.create_model_and_transforms(
+                "ViT-B-32", pretrained="laion2b_s34b_b79k"
+            )
+            self._oc_model = self._oc_model.to(self.device).eval()
+            self._backend = "open_clip"
+            self.embed_dim = 512
+            print("[GarmentMetric] Using open_clip ViT-B/32 for garment embeddings.")
+            return
+        except Exception as e:
+            print(f"[GarmentMetric] open_clip unavailable ({e}).")
 
         # Try HuggingFace CLIP
         try:
@@ -114,6 +131,9 @@ class _GarmentEncoder:
         if self._backend == "openai_clip":
             return self._openai_clip_embed(cloth_imgs)
 
+        if self._backend == "open_clip":
+            return self._open_clip_embed(cloth_imgs)
+
         if self._backend == "hf_clip":
             return self._hf_clip_embed(cloth_imgs)
 
@@ -126,6 +146,14 @@ class _GarmentEncoder:
         pils = [TF.to_pil_image(img.clamp(0, 1).cpu()) for img in imgs]
         inp  = torch.stack([self._preprocess(p) for p in pils]).to(self.device)
         emb  = self._clip.encode_image(inp)
+        emb  = F.normalize(emb.float(), dim=-1)
+        return emb.cpu().numpy()
+
+    def _open_clip_embed(self, imgs: torch.Tensor) -> np.ndarray:
+        from PIL import Image
+        pils = [TF.to_pil_image(img.clamp(0, 1).cpu()) for img in imgs]
+        inp  = torch.stack([self._oc_preprocess(p) for p in pils]).to(self.device)
+        emb  = self._oc_model.encode_image(inp)
         emb  = F.normalize(emb.float(), dim=-1)
         return emb.cpu().numpy()
 
