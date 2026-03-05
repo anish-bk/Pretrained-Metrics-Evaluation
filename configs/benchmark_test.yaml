@@ -17,25 +17,25 @@ defaults:
 
 datasets:
   - name: viton_hd
-    root: ../benchmark_datasets/viton_hd
+    root: ..test_dataset/benchmark_datasets/viton_hd
     img_size: [1024, 768]
 
   - name: dresscode
-    root: ../benchmark_datasets/dresscode
+    root: ..test_dataset/benchmark_datasets/dresscode
     dresscode_category: upper_body
 
   - name: dresscode
-    root: ../benchmark_datasets/dresscode
+    root: ..test_dataset/benchmark_datasets/dresscode
     dresscode_category: lower_body
 
   - name: dresscode
-    root: ../benchmark_datasets/dresscode
+    root: ..test_dataset/benchmark_datasets/dresscode
     dresscode_category: dresses
 
   - name: laion_fashion
-    root: ../benchmark_datasets/LAION-RVS-Fashion
+    root: ..test_dataset/benchmark_datasets/LAION-RVS-Fashion
     split: test
 
   - name: street_tryon
-    root: ../benchmark_datasets/street_tryon
+    root: ..test_dataset/benchmark_datasets/street_tryon
     split: test
